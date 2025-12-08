@@ -11,3 +11,7 @@ datalab-app-plugin-profilometry is a [*datalab*](https://datalab-org.io) plugin 
 
 
 Releases are created via semantic version tags on GitHub, and will require manually updating the CHANGELOG.
+
+## Acknowledgements
+
+This work was supported by [DIALUP "Dialling Up Performance for On Demand Manufacturing"](https://www.nottingham.ac.uk/research/groups/cfam/research/research-projects/dialling-up-performance-for-on-demand-manufacture/dialling-up-performance-for-on-demand-manufacturing.aspx) EPSRC (EP/W017032/1) lead by [Prof Ricky Wildman](https://www.nottingham.ac.uk/engineering/departments/chemenv/people/ricky.wildman) at the [Centre of Additive Manufacturing, University of Nottingham](https://www.nottingham.ac.uk/research/groups/cfam/index.aspx).
