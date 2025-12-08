@@ -1,0 +1,14 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v0.2.0
+_src_path: git@github.com:datalab-org/datalab-app-plugin-template
+author_email: dev@datalab.industries
+author_fullname: datalab industries ltd.
+copyright_date: '2025'
+copyright_holder: datalab industries ltd.
+copyright_holder_email: dev@datalab.industries
+package_name: datalab_app_plugin_profilometry
+project_name: datalab-app-plugin-profilometry
+repository_name: datalab-app-plugin-profilometry
+repository_namespace: datalab-industries
+short_description: A datalab plugin for managing profilometry data.
+

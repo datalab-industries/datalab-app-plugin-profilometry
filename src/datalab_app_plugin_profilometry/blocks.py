@@ -10,7 +10,6 @@ import numpy as np
 from bokeh.layouts import column
 from bokeh.models import ColorBar, LinearColorMapper
 from bokeh.plotting import figure
-
 from pydatalab.blocks.base import DataBlock
 from pydatalab.bokeh_plots import DATALAB_BOKEH_THEME
 from pydatalab.file_utils import get_file_info_by_id
