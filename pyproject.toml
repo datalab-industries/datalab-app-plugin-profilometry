@@ -35,9 +35,8 @@ repository = "https://github.com/datalab-industries/datalab-app-plugin-profilome
 documentation = "https://datalab-industries.github.io/datalab-app-plugin-profilometry/"
 changelog = "https://github.com/datalab-industries/datalab-app-plugin-profilometry/CHANGELOG.md"
 
-# Edit this entry point with any block classes implemented in this plugin
 [project.entry-points.'pydatalab.apps.plugins']
-example = "datalab_app_plugin_profilometry.blocks:ExampleDataBlock"
+profilometry = "datalab_app_plugin_profilometry.blocks:ProfilingBlock"
 
 [tool.setuptools.packages.find]
 where = ["src"]
