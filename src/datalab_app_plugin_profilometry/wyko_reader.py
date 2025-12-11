@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
-
 from pydatalab.logger import LOGGER
 
 
@@ -343,6 +342,102 @@ def load_wyko_cache(cache_path: str | Path) -> dict:
 
     if "intensity" in cached:
         result["intensity"] = cached["intensity"]
+
+    return result
+
+
+def load_wyko_asc_cached(
+    filepath: str | Path, load_intensity: bool = False, progress: bool = False, reload: bool = False
+) -> dict:
+    """
+    Load a Wyko ASC file with automatic caching for faster subsequent loads.
+
+    This function checks for a cached .npz file alongside the original .ASC file.
+    If the cache exists and is up-to-date, it loads from cache (much faster).
+    Otherwise, it loads from the .ASC file and creates/updates the cache.
+
+    Args:
+        filepath: Path to the .ASC file
+        load_intensity: If True, also load the intensity profile
+        progress: If True, show progress during loading
+        reload: If True, force reload from .ASC file and regenerate cache
+
+    Returns:
+        Dictionary containing:
+        - metadata: Header information
+        - raw_data: Height profile as numpy array (n_rows x n_cols)
+        - intensity: Intensity profile (only if load_intensity=True)
+
+    Example:
+        >>> # First load: reads .ASC and creates cache (~30-90s for 3.5GB file)
+        >>> result = load_wyko_asc_cached('sample.ASC')
+        >>> # Subsequent loads: reads from cache (~2-5s)
+        >>> result = load_wyko_asc_cached('sample.ASC')
+    """
+    t_start = time.perf_counter()
+    filepath = Path(filepath)
+
+    if not filepath.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+    # Determine cache path
+    cache_path = filepath.with_suffix(".npz")
+
+    # Check if we should use the cache
+    use_cache = False
+    if not reload and cache_path.exists():
+        # Check if cache is newer than source file
+        asc_mtime = filepath.stat().st_mtime
+        cache_mtime = cache_path.stat().st_mtime
+
+        if cache_mtime >= asc_mtime:
+            use_cache = True
+            LOGGER.info(f"Loading from cache: {cache_path.name}")
+        else:
+            LOGGER.info("Cache is stale (older than source file), regenerating cache")
+
+    # Load from cache if valid
+    if use_cache:
+        try:
+            t_load_start = time.perf_counter()
+            result = load_wyko_cache(cache_path)
+            t_load = time.perf_counter() - t_load_start
+
+            # Check if we need intensity data but cache doesn't have it
+            if load_intensity and "intensity" not in result:
+                LOGGER.warning(
+                    "Cache exists but doesn't contain intensity data, reloading from .ASC"
+                )
+                use_cache = False
+            else:
+                data_size_mb = result["raw_data"].nbytes / (1024 * 1024)
+                cache_size_mb = cache_path.stat().st_size / (1024 * 1024)
+                t_total = time.perf_counter() - t_start
+                LOGGER.info(
+                    f"Loaded from cache in {t_load:.3f}s (total: {t_total:.3f}s, "
+                    f"{data_size_mb:.1f} MB data, {cache_size_mb:.1f} MB cache file)"
+                )
+                return result
+        except Exception as e:
+            LOGGER.warning(f"Failed to load cache ({e}), falling back to .ASC file")
+            use_cache = False
+
+    # Load from .ASC file (either cache wasn't valid or was disabled)
+    LOGGER.info(f"Loading from .ASC file: {filepath.name}")
+    result = load_wyko_asc(filepath, load_intensity=load_intensity, progress=progress)
+
+    # Save cache for future use
+    try:
+        t_cache_start = time.perf_counter()
+        cache_path = save_wyko_cache(filepath, result, cache_path=cache_path)
+        t_cache = time.perf_counter() - t_cache_start
+        cache_size_mb = cache_path.stat().st_size / (1024 * 1024)
+        LOGGER.info(f"Cache saved in {t_cache:.3f}s ({cache_size_mb:.1f} MB)")
+    except Exception as e:
+        LOGGER.warning(f"Failed to save cache: {e}")
+
+    t_total = time.perf_counter() - t_start
+    LOGGER.info(f"Total load time (with caching): {t_total:.3f}s")
 
     return result
 
