@@ -5,10 +5,13 @@ Memory-efficient parser for Wyko .ASC profilometer data files containing
 surface height (RAW_DATA) and intensity profiles.
 """
 
+import time
 from pathlib import Path
 from typing import cast
 
 import numpy as np
+
+from pydatalab.logger import LOGGER
 
 
 def parse_wyko_header(filepath: str | Path) -> dict[str, int | float | None]:
@@ -28,6 +31,11 @@ def parse_wyko_header(filepath: str | Path) -> dict[str, int | float | None]:
 
     Note: All line numbers are 1-indexed to match linecache.
     """
+    t_start = time.perf_counter()
+    filepath = Path(filepath)
+    file_size_mb = filepath.stat().st_size / (1024 * 1024)
+    LOGGER.debug(f"Parsing header for {filepath.name} ({file_size_mb:.1f} MB)")
+
     metadata: dict[str, int | float | None] = {
         "x_size": None,
         "y_size": None,
@@ -36,6 +44,7 @@ def parse_wyko_header(filepath: str | Path) -> dict[str, int | float | None]:
         "intensity_start": None,  # 1-indexed line number
     }
 
+    t_header_read_start = time.perf_counter()
     with open(filepath) as f:
         # Use 1-indexed line counting (start=1)
         for i, line in enumerate(f, start=1):
@@ -56,6 +65,12 @@ def parse_wyko_header(filepath: str | Path) -> dict[str, int | float | None]:
             if i > 10:
                 break
 
+    t_header_read = time.perf_counter() - t_header_read_start
+    LOGGER.debug(f"Header read took {t_header_read:.3f}s")
+    LOGGER.debug(
+        f"Found dimensions: {metadata['x_size']}x{metadata['y_size']}, pixel_size: {metadata['pixel_size']} mm"
+    )
+
     # Calculate Intensity start position from metadata
     # Intensity block header appears after all RAW_DATA rows
     # Structure: RAW_DATA rows + 1 line for "Intensity" header
@@ -69,18 +84,30 @@ def parse_wyko_header(filepath: str | Path) -> dict[str, int | float | None]:
         intensity_header_line = raw_data_start + x_size
 
         # Validate that "Intensity" actually appears at the calculated line
-        # linecache.getline uses 1-indexed line numbers (matches text editors)
-        import linecache
+        # Open file and seek to the specific line efficiently (without reading entire file)
+        t_intensity_check_start = time.perf_counter()
+        with open(filepath) as f:
+            # Skip to the intensity header line (convert 1-indexed to 0-indexed)
+            for _ in range(intensity_header_line - 1):
+                f.readline()
 
-        line = linecache.getline(str(filepath), intensity_header_line)
-        linecache.clearcache()  # Free memory
+            # Read the intensity header line
+            line = f.readline()
 
-        if line.strip().startswith("Intensity"):
-            # Data starts on the line after the "Intensity" header
-            metadata["intensity_start"] = intensity_header_line + 1  # 1-indexed
-        else:
-            # Intensity block not found at expected location
-            metadata["intensity_start"] = None
+            if line.strip().startswith("Intensity"):
+                # Data starts on the line after the "Intensity" header
+                metadata["intensity_start"] = intensity_header_line + 1  # 1-indexed
+                LOGGER.debug(f"Found Intensity block at line {intensity_header_line}")
+            else:
+                # Intensity block not found at expected location
+                metadata["intensity_start"] = None
+                LOGGER.debug("No Intensity block found")
+
+        t_intensity_check = time.perf_counter() - t_intensity_check_start
+        LOGGER.debug(f"Intensity check took {t_intensity_check:.3f}s")
+
+    t_total = time.perf_counter() - t_start
+    LOGGER.debug(f"Total header parsing took {t_total:.3f}s")
 
     return metadata
 
@@ -175,13 +202,19 @@ def load_wyko_asc(
         >>> plt.colorbar(label='Height')
         >>> plt.show()
     """
+    t_start_total = time.perf_counter()
     filepath = Path(filepath)
 
     if not filepath.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
 
+    LOGGER.info(f"Loading Wyko file: {filepath.name}")
+
     # Parse header
+    t_metadata_start = time.perf_counter()
     metadata = parse_wyko_header(filepath)
+    t_metadata = time.perf_counter() - t_metadata_start
+    LOGGER.debug(f"Header parsing took {t_metadata:.3f}s")
 
     if metadata["x_size"] is None or metadata["y_size"] is None:
         raise ValueError("Could not parse X Size and Y Size from file header")
@@ -194,6 +227,9 @@ def load_wyko_asc(
     n_rows = cast(int, metadata["x_size"])
     n_cols = cast(int, metadata["y_size"])
     raw_data_start = cast(int, metadata["raw_data_start"])
+    total_pixels = n_rows * n_cols
+
+    LOGGER.info(f"File dimensions: {n_rows}x{n_cols} ({total_pixels:,} pixels)")
 
     if progress:
         print(f"Loading Wyko ASC file: {filepath.name}")
@@ -203,12 +239,20 @@ def load_wyko_asc(
     result = {"metadata": metadata}
 
     # Load RAW_DATA (height profile)
-    result["raw_data"] = load_wyko_profile_pandas_chunked(
+    t_load_raw_start = time.perf_counter()
+    raw_data = load_wyko_profile_pandas_chunked(
         filepath,
         start_line=raw_data_start,
         n_rows=n_rows,
         n_cols=n_cols,
         name="RAW_DATA",
+    )
+    result["raw_data"] = raw_data
+    t_load_raw = time.perf_counter() - t_load_raw_start
+    data_size_mb = raw_data.nbytes / (1024 * 1024)
+    load_speed_mb_s = data_size_mb / t_load_raw
+    LOGGER.info(
+        f"RAW_DATA loaded in {t_load_raw:.3f}s ({data_size_mb:.2f} MB at {load_speed_mb_s:.1f} MB/s)"
     )
 
     # Optionally load Intensity
@@ -218,6 +262,7 @@ def load_wyko_asc(
                 "Intensity data requested but no Intensity block found in file. "
                 "The file may not contain intensity data."
             )
+        t_load_intensity_start = time.perf_counter()
         intensity_start = cast(int, metadata["intensity_start"])
         result["intensity"] = load_wyko_profile_pandas_chunked(
             filepath,
@@ -226,6 +271,11 @@ def load_wyko_asc(
             n_cols=n_cols,
             name="Intensity",
         )
+        t_load_intensity = time.perf_counter() - t_load_intensity_start
+        LOGGER.info(f"Intensity loaded in {t_load_intensity:.3f}s")
+
+    t_total = time.perf_counter() - t_start_total
+    LOGGER.info(f"Total file loading completed in {t_total:.3f}s")
 
     return result
 

@@ -2,6 +2,7 @@
 Profiling data blocks for surface profilometry visualization.
 """
 
+import time
 import warnings
 from pathlib import Path
 
@@ -10,9 +11,11 @@ import numpy as np
 from bokeh.layouts import column
 from bokeh.models import ColorBar, LinearColorMapper
 from bokeh.plotting import figure
+
 from pydatalab.blocks.base import DataBlock
 from pydatalab.bokeh_plots import DATALAB_BOKEH_THEME
 from pydatalab.file_utils import get_file_info_by_id
+from pydatalab.logger import LOGGER
 
 from .wyko_reader import load_wyko_asc
 
@@ -48,8 +51,13 @@ class ProfilingBlock(DataBlock):
         Returns:
             Bokeh figure with image plot
         """
+        t_start = time.perf_counter()
+
         # Get dimensions
         n_rows, n_cols = image_data.shape
+        LOGGER.debug(
+            f"Creating image plot for {n_rows}x{n_cols} array ({n_rows * n_cols:,} pixels)"
+        )
 
         # Calculate physical dimensions if pixel_size is available
         # pixel_size is in mm, convert to µm for display
@@ -66,6 +74,7 @@ class ProfilingBlock(DataBlock):
             y_label = "Y (pixels)"
 
         # Calculate color range, ignoring NaN values
+        t_percentile_start = time.perf_counter()
         valid_data = image_data[~np.isnan(image_data)]
         if len(valid_data) > 0:
             # Use percentiles to avoid outliers dominating the color scale
@@ -73,6 +82,10 @@ class ProfilingBlock(DataBlock):
             vmax = np.percentile(valid_data, 99)
         else:
             vmin, vmax = 0, 1
+        t_percentile = time.perf_counter() - t_percentile_start
+        LOGGER.debug(
+            f"Percentile calculation took {t_percentile:.3f}s ({len(valid_data):,} valid pixels)"
+        )
 
         # Create color mapper
         color_mapper = LinearColorMapper(
@@ -80,6 +93,7 @@ class ProfilingBlock(DataBlock):
         )
 
         # Create figure
+        t_bokeh_start = time.perf_counter()
         p = figure(
             title=title,
             x_axis_label=x_label,
@@ -116,6 +130,11 @@ class ProfilingBlock(DataBlock):
         p.toolbar.logo = "grey"
         p.grid.visible = False
 
+        t_bokeh = time.perf_counter() - t_bokeh_start
+        t_total = time.perf_counter() - t_start
+        LOGGER.debug(f"Bokeh figure creation took {t_bokeh:.3f}s")
+        LOGGER.debug(f"Total image plot creation took {t_total:.3f}s")
+
         return p
 
     @staticmethod
@@ -137,11 +156,15 @@ class ProfilingBlock(DataBlock):
         Returns:
             Bokeh figure with histogram plot
         """
+        t_start = time.perf_counter()
+
         # Get valid (non-NaN) data
         valid_data = image_data[~np.isnan(image_data)]
+        LOGGER.debug(f"Creating histogram for {len(valid_data):,} valid pixels with {n_bins} bins")
 
         if len(valid_data) == 0:
             # Create empty plot if no valid data
+            LOGGER.warning("No valid data for histogram, creating empty plot")
             p = figure(
                 title=title,
                 x_axis_label=x_label,
@@ -152,9 +175,13 @@ class ProfilingBlock(DataBlock):
             return p
 
         # Compute histogram
+        t_hist_start = time.perf_counter()
         hist, edges = np.histogram(valid_data, bins=n_bins)
+        t_hist = time.perf_counter() - t_hist_start
+        LOGGER.debug(f"Histogram computation took {t_hist:.3f}s")
 
         # Create figure
+        t_bokeh_start = time.perf_counter()
         p = figure(
             title=title,
             x_axis_label=x_label,
@@ -178,6 +205,11 @@ class ProfilingBlock(DataBlock):
         # Style
         p.toolbar.logo = "grey"
 
+        t_bokeh = time.perf_counter() - t_bokeh_start
+        t_total = time.perf_counter() - t_start
+        LOGGER.debug(f"Bokeh histogram figure creation took {t_bokeh:.3f}s")
+        LOGGER.debug(f"Total histogram creation took {t_total:.3f}s")
+
         return p
 
     def generate_profiling_plot(self, filepath=None):
@@ -187,14 +219,22 @@ class ProfilingBlock(DataBlock):
             filepath: Optional path to the file to plot. If not provided,
                      uses the file_id from self.data to look up the file.
         """
+        t_start_total = time.perf_counter()
+
         # Get file path either from parameter or from database lookup
         if filepath is not None:
             file_path = Path(filepath)
         else:
             if "file_id" not in self.data:
+                LOGGER.debug("No file_id in block data, skipping plot generation")
                 return
+            t_file_lookup_start = time.perf_counter()
             file_info = get_file_info_by_id(self.data["file_id"], update_if_live=True)
             file_path = Path(file_info["location"])
+            t_file_lookup = time.perf_counter() - t_file_lookup_start
+            LOGGER.debug(f"File lookup took {t_file_lookup:.3f}s")
+
+        LOGGER.info(f"Generating profiling plot for: {file_path.name}")
 
         ext = file_path.suffix.lower()
 
@@ -206,34 +246,56 @@ class ProfilingBlock(DataBlock):
 
         try:
             # Load the Wyko ASC file
+            t_load_start = time.perf_counter()
             result = load_wyko_asc(file_path, load_intensity=False, progress=False)
+            t_load = time.perf_counter() - t_load_start
+            LOGGER.info(f"File loading completed in {t_load:.3f}s")
 
             # Get the height data
             height_data = result["raw_data"]
             pixel_size = result["metadata"].get("pixel_size")
+            data_size_mb = height_data.nbytes / (1024 * 1024)
+            LOGGER.debug(f"Loaded data: {height_data.shape} array, {data_size_mb:.2f} MB")
 
             # Create the 2D image plot
+            t_image_start = time.perf_counter()
             image_plot = self._create_image_plot(
                 height_data,
                 pixel_size=pixel_size,
                 title="Surface Height Profile",
                 colorbar_label="Height",
             )
+            t_image = time.perf_counter() - t_image_start
+            LOGGER.info(f"Image plot creation completed in {t_image:.3f}s")
 
             # Create the histogram plot
+            t_hist_start = time.perf_counter()
             histogram_plot = self._create_histogram_plot(
                 height_data,
                 title="Height Distribution",
                 x_label="Height (µm)",
                 n_bins=100,
             )
+            t_hist = time.perf_counter() - t_hist_start
+            LOGGER.info(f"Histogram plot creation completed in {t_hist:.3f}s")
 
             # Combine plots in a vertical layout
+            t_layout_start = time.perf_counter()
             layout = column(image_plot, histogram_plot, sizing_mode="scale_width")
+            t_layout = time.perf_counter() - t_layout_start
+            LOGGER.debug(f"Layout creation took {t_layout:.3f}s")
 
             # Store as bokeh JSON
+            t_json_start = time.perf_counter()
             self.data["bokeh_plot_data"] = bokeh.embed.json_item(layout, theme=DATALAB_BOKEH_THEME)
+            t_json = time.perf_counter() - t_json_start
+            json_size_kb = len(str(self.data["bokeh_plot_data"])) / 1024
+            LOGGER.info(f"JSON serialization completed in {t_json:.3f}s ({json_size_kb:.1f} KB)")
+
+            t_total = time.perf_counter() - t_start_total
+            LOGGER.info(f"Total plot generation completed in {t_total:.3f}s")
 
         except Exception as e:
+            LOGGER.error(f"Error loading profiling data: {e}", exc_info=True)
             warnings.warn(f"Error loading profiling data: {e}")
             return
