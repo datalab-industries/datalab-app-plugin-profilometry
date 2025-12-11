@@ -285,6 +285,9 @@ def save_wyko_cache(
     """
     Save loaded Wyko data as compressed numpy file for faster reloading.
 
+    This function also pre-calculates and caches percentile values (1st and 99th)
+    for the raw_data to speed up plotting operations.
+
     Args:
         filepath: Original ASC file path (used to generate cache name)
         result: Result dictionary from load_wyko_asc()
@@ -305,6 +308,28 @@ def save_wyko_cache(
         "pixel_size": result["metadata"]["pixel_size"],
     }
 
+    # Calculate and cache percentiles for faster plotting
+    t_percentile_start = time.perf_counter()
+    raw_data = result["raw_data"]
+    valid_data = raw_data[~np.isnan(raw_data)]
+
+    if len(valid_data) > 0:
+        percentile_1 = np.percentile(valid_data, 1)
+        percentile_99 = np.percentile(valid_data, 99)
+        save_dict["percentile_1"] = np.float32(percentile_1)
+        save_dict["percentile_99"] = np.float32(percentile_99)
+        t_percentile = time.perf_counter() - t_percentile_start
+        LOGGER.debug(
+            f"Calculated percentiles for caching in {t_percentile:.3f}s "
+            f"(p1={percentile_1:.3f}, p99={percentile_99:.3f})"
+        )
+    else:
+        # No valid data, store default values
+        save_dict["percentile_1"] = np.float32(0.0)
+        save_dict["percentile_99"] = np.float32(1.0)
+        t_percentile = time.perf_counter() - t_percentile_start
+        LOGGER.debug(f"No valid data for percentiles, using defaults ({t_percentile:.3f}s)")
+
     if "intensity" in result:
         save_dict["intensity"] = result["intensity"]
 
@@ -322,7 +347,8 @@ def load_wyko_cache(cache_path: str | Path) -> dict:
         cache_path: Path to the .npz cache file
 
     Returns:
-        Dictionary with same structure as load_wyko_asc()
+        Dictionary with same structure as load_wyko_asc(), plus optional
+        cached percentile values in metadata if available.
     """
     cache_path = Path(cache_path)
 
@@ -339,6 +365,15 @@ def load_wyko_cache(cache_path: str | Path) -> dict:
         },
         "raw_data": cached["raw_data"],
     }
+
+    # Load cached percentiles if available (for faster plotting)
+    if "percentile_1" in cached and "percentile_99" in cached:
+        result["metadata"]["percentile_1"] = float(cached["percentile_1"])
+        result["metadata"]["percentile_99"] = float(cached["percentile_99"])
+        LOGGER.debug(
+            f"Loaded cached percentiles: p1={result['metadata']['percentile_1']:.3f}, "
+            f"p99={result['metadata']['percentile_99']:.3f}"
+        )
 
     if "intensity" in cached:
         result["intensity"] = cached["intensity"]
