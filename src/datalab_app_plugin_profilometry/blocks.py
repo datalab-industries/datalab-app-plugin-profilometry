@@ -11,13 +11,12 @@ import numpy as np
 from bokeh.layouts import column
 from bokeh.models import ColorBar, LinearColorMapper
 from bokeh.plotting import figure
-
 from pydatalab.blocks.base import DataBlock
 from pydatalab.bokeh_plots import DATALAB_BOKEH_THEME
 from pydatalab.file_utils import get_file_info_by_id
 from pydatalab.logger import LOGGER
 
-from .wyko_reader import load_wyko_asc
+from .wyko_reader import load_wyko_asc_cached
 
 
 class ProfilingBlock(DataBlock):
@@ -245,9 +244,9 @@ class ProfilingBlock(DataBlock):
             return
 
         try:
-            # Load the Wyko ASC file
+            # Load the Wyko ASC file (with automatic caching)
             t_load_start = time.perf_counter()
-            result = load_wyko_asc(file_path, load_intensity=False, progress=False)
+            result = load_wyko_asc_cached(file_path, load_intensity=False, progress=False)
             t_load = time.perf_counter() - t_load_start
             LOGGER.info(f"File loading completed in {t_load:.3f}s")
 

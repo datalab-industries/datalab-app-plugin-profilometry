@@ -5,6 +5,7 @@ Profiling apps for surface profilometry data analysis.
 from .blocks import ProfilingBlock
 from .wyko_reader import (
     load_wyko_asc,
+    load_wyko_asc_cached,
     load_wyko_cache,
     load_wyko_profile,
     load_wyko_profile_pandas,
@@ -16,6 +17,7 @@ from .wyko_reader import (
 __all__ = [
     "ProfilingBlock",
     "load_wyko_asc",
+    "load_wyko_asc_cached",
     "load_wyko_cache",
     "load_wyko_profile",
     "load_wyko_profile_pandas",
