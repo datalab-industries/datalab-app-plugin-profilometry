@@ -37,6 +37,7 @@ class ProfilingBlock(DataBlock):
         pixel_size: float | None = None,
         title: str = "Surface Profile",
         colorbar_label: str = "Height",
+        cached_percentiles: tuple[float, float] | None = None,
     ):
         """
         Create a 2D Bokeh image plot for surface profilometry data.
@@ -46,6 +47,7 @@ class ProfilingBlock(DataBlock):
             pixel_size: Physical pixel size in mm (for axis scaling)
             title: Plot title
             colorbar_label: Label for the colorbar
+            cached_percentiles: Optional tuple of (p1, p99) percentiles from cache
 
         Returns:
             Bokeh figure with image plot
@@ -73,18 +75,23 @@ class ProfilingBlock(DataBlock):
             y_label = "Y (pixels)"
 
         # Calculate color range, ignoring NaN values
-        t_percentile_start = time.perf_counter()
-        valid_data = image_data[~np.isnan(image_data)]
-        if len(valid_data) > 0:
-            # Use percentiles to avoid outliers dominating the color scale
-            vmin = np.percentile(valid_data, 1)
-            vmax = np.percentile(valid_data, 99)
+        # Use cached percentiles if available, otherwise calculate
+        if cached_percentiles is not None:
+            vmin, vmax = cached_percentiles
+            LOGGER.debug(f"Using cached percentiles: p1={vmin:.3f}, p99={vmax:.3f}")
         else:
-            vmin, vmax = 0, 1
-        t_percentile = time.perf_counter() - t_percentile_start
-        LOGGER.debug(
-            f"Percentile calculation took {t_percentile:.3f}s ({len(valid_data):,} valid pixels)"
-        )
+            t_percentile_start = time.perf_counter()
+            valid_data = image_data[~np.isnan(image_data)]
+            if len(valid_data) > 0:
+                # Use percentiles to avoid outliers dominating the color scale
+                vmin = np.percentile(valid_data, 1)
+                vmax = np.percentile(valid_data, 99)
+            else:
+                vmin, vmax = 0, 1
+            t_percentile = time.perf_counter() - t_percentile_start
+            LOGGER.debug(
+                f"Percentile calculation took {t_percentile:.3f}s ({len(valid_data):,} valid pixels)"
+            )
 
         # Create color mapper
         color_mapper = LinearColorMapper(
@@ -256,6 +263,14 @@ class ProfilingBlock(DataBlock):
             data_size_mb = height_data.nbytes / (1024 * 1024)
             LOGGER.debug(f"Loaded data: {height_data.shape} array, {data_size_mb:.2f} MB")
 
+            # Get cached percentiles if available
+            cached_percentiles = None
+            if "percentile_1" in result["metadata"] and "percentile_99" in result["metadata"]:
+                cached_percentiles = (
+                    result["metadata"]["percentile_1"],
+                    result["metadata"]["percentile_99"],
+                )
+
             # Create the 2D image plot
             t_image_start = time.perf_counter()
             image_plot = self._create_image_plot(
@@ -263,6 +278,7 @@ class ProfilingBlock(DataBlock):
                 pixel_size=pixel_size,
                 title="Surface Height Profile",
                 colorbar_label="Height",
+                cached_percentiles=cached_percentiles,
             )
             t_image = time.perf_counter() - t_image_start
             LOGGER.info(f"Image plot creation completed in {t_image:.3f}s")
