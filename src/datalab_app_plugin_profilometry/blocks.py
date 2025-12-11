@@ -19,6 +19,64 @@ from pydatalab.logger import LOGGER
 from .wyko_reader import load_wyko_asc_cached
 
 
+def downsample_image_block_average(
+    image: np.ndarray, max_dimension: int = 2000
+) -> tuple[np.ndarray, float]:
+    """
+    Downsample an image using block averaging to a target maximum dimension.
+
+    This function preserves data characteristics better than decimation while
+    reducing data size for visualization. NaN values are handled properly.
+
+    Args:
+        image: 2D numpy array to downsample
+        max_dimension: Maximum size for the larger dimension (default: 2000px)
+
+    Returns:
+        tuple: (downsampled_image, downsample_factor)
+            - downsampled_image: Downsampled 2D array
+            - downsample_factor: Factor by which the image was downsampled
+    """
+    n_rows, n_cols = image.shape
+
+    # Calculate downsampling factor based on larger dimension
+    max_current = max(n_rows, n_cols)
+    if max_current <= max_dimension:
+        # No downsampling needed
+        return image, 1.0
+
+    downsample_factor = max_current / max_dimension
+    LOGGER.debug(f"Downsampling factor calculated: {downsample_factor:.2f}")
+    block_size = int(np.ceil(downsample_factor))
+
+    # Calculate new dimensions
+    new_rows = n_rows // block_size
+    new_cols = n_cols // block_size
+
+    # Trim image to be evenly divisible by block_size
+    trimmed_rows = new_rows * block_size
+    trimmed_cols = new_cols * block_size
+    trimmed_image = image[:trimmed_rows, :trimmed_cols]
+
+    # Reshape into blocks and compute nanmean along block dimensions
+    # Shape: (new_rows, block_size, new_cols, block_size)
+    blocks = trimmed_image.reshape(new_rows, block_size, new_cols, block_size)
+
+    # Average over the block dimensions (axis 1 and 3)
+    # Use nanmean to handle NaN values properly
+    # Suppress "mean of empty slice" warning for blocks that are entirely NaN
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Mean of empty slice")
+        downsampled = np.nanmean(blocks, axis=(1, 3))
+
+    LOGGER.debug(
+        f"Downsampled from {n_rows}x{n_cols} to {new_rows}x{new_cols} "
+        f"(factor: {downsample_factor:.2f}x, block size: {block_size}x{block_size})"
+    )
+
+    return downsampled.astype(np.float32), downsample_factor
+
+
 class ProfilingBlock(DataBlock):
     """Block for visualizing surface profilometry data."""
 
@@ -26,6 +84,7 @@ class ProfilingBlock(DataBlock):
     blocktype = "profiling"
     name = "Surface Profiling"
     description = "This block can plot surface profilometry data from Wyko .ASC files"
+    downsample_image_size: int = 3000  # Max dimension for image downsampling
 
     @property
     def plot_functions(self):
@@ -38,6 +97,7 @@ class ProfilingBlock(DataBlock):
         title: str = "Surface Profile",
         colorbar_label: str = "Height",
         cached_percentiles: tuple[float, float] | None = None,
+        downsample_image_size: int = 2000,
     ):
         """
         Create a 2D Bokeh image plot for surface profilometry data.
@@ -54,6 +114,20 @@ class ProfilingBlock(DataBlock):
         """
         t_start = time.perf_counter()
 
+        # Downsample for visualization if needed
+        t_downsample_start = time.perf_counter()
+        original_shape = image_data.shape
+        image_data, downsample_factor = downsample_image_block_average(
+            image_data, max_dimension=downsample_image_size
+        )
+        t_downsample = time.perf_counter() - t_downsample_start
+
+        if downsample_factor > 1.0:
+            LOGGER.info(
+                f"Downsampled image from {original_shape[0]}x{original_shape[1]} to "
+                f"{image_data.shape[0]}x{image_data.shape[1]} ({t_downsample:.3f}s)"
+            )
+
         # Get dimensions
         n_rows, n_cols = image_data.shape
         LOGGER.debug(
@@ -61,9 +135,11 @@ class ProfilingBlock(DataBlock):
         )
 
         # Calculate physical dimensions if pixel_size is available
+        # Adjust pixel_size for downsampling factor
         # pixel_size is in mm, convert to µm for display
         if pixel_size:
-            pixel_size_um = pixel_size * 1000  # mm to µm
+            effective_pixel_size = pixel_size * downsample_factor
+            pixel_size_um = effective_pixel_size * 1000  # mm to µm
             x_range = (0, n_cols * pixel_size_um)
             y_range = (0, n_rows * pixel_size_um)
             x_label = "X (µm)"
@@ -149,6 +225,7 @@ class ProfilingBlock(DataBlock):
         title: str = "Height Distribution",
         x_label: str = "Height",
         n_bins: int = 100,
+        downsample_image_size: int = 10000,
     ):
         """
         Create a histogram plot for z-values (height distribution).
@@ -163,6 +240,21 @@ class ProfilingBlock(DataBlock):
             Bokeh figure with histogram plot
         """
         t_start = time.perf_counter()
+
+        # Downsample for histogram calculation if data is very large
+        # Use larger max_dimension since histogram doesn't need as much downsampling
+        original_size = image_data.size
+        if original_size > 10_000_000:  # > 10M pixels
+            t_downsample_start = time.perf_counter()
+            original_shape = image_data.shape
+            image_data, downsample_factor = downsample_image_block_average(
+                image_data, max_dimension=downsample_image_size
+            )
+            t_downsample = time.perf_counter() - t_downsample_start
+            LOGGER.debug(
+                f"Downsampled histogram data from {original_shape[0]}x{original_shape[1]} to "
+                f"{image_data.shape[0]}x{image_data.shape[1]} ({t_downsample:.3f}s)"
+            )
 
         # Get valid (non-NaN) data
         valid_data = image_data[~np.isnan(image_data)]
@@ -279,6 +371,7 @@ class ProfilingBlock(DataBlock):
                 title="Surface Height Profile",
                 colorbar_label="Height",
                 cached_percentiles=cached_percentiles,
+                downsample_image_size=self.downsample_image_size,
             )
             t_image = time.perf_counter() - t_image_start
             LOGGER.info(f"Image plot creation completed in {t_image:.3f}s")
@@ -290,6 +383,7 @@ class ProfilingBlock(DataBlock):
                 title="Height Distribution",
                 x_label="Height (µm)",
                 n_bins=100,
+                downsample_image_size=self.downsample_image_size * 2,
             )
             t_hist = time.perf_counter() - t_hist_start
             LOGGER.info(f"Histogram plot creation completed in {t_hist:.3f}s")
