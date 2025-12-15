@@ -97,36 +97,23 @@ class ProfilingBlock(DataBlock):
         title: str = "Surface Profile",
         colorbar_label: str = "Height",
         cached_percentiles: tuple[float, float] | None = None,
-        downsample_image_size: int = 2000,
+        downsample_factor: float = 1.0,
     ):
         """
         Create a 2D Bokeh image plot for surface profilometry data.
 
         Args:
-            image_data: 2D numpy array of height/intensity values
+            image_data: 2D numpy array of height/intensity values (already downsampled if needed)
             pixel_size: Physical pixel size in mm (for axis scaling)
             title: Plot title
             colorbar_label: Label for the colorbar
             cached_percentiles: Optional tuple of (p1, p99) percentiles from cache
+            downsample_factor: Factor by which the image was downsampled (for pixel size adjustment)
 
         Returns:
             Bokeh figure with image plot
         """
         t_start = time.perf_counter()
-
-        # Downsample for visualization if needed
-        t_downsample_start = time.perf_counter()
-        original_shape = image_data.shape
-        image_data, downsample_factor = downsample_image_block_average(
-            image_data, max_dimension=downsample_image_size
-        )
-        t_downsample = time.perf_counter() - t_downsample_start
-
-        if downsample_factor > 1.0:
-            LOGGER.info(
-                f"Downsampled image from {original_shape[0]}x{original_shape[1]} to "
-                f"{image_data.shape[0]}x{image_data.shape[1]} ({t_downsample:.3f}s)"
-            )
 
         # Get dimensions
         n_rows, n_cols = image_data.shape
@@ -355,6 +342,31 @@ class ProfilingBlock(DataBlock):
             data_size_mb = height_data.nbytes / (1024 * 1024)
             LOGGER.debug(f"Loaded data: {height_data.shape} array, {data_size_mb:.2f} MB")
 
+            # Downsample for visualization if needed
+            t_downsample_start = time.perf_counter()
+            original_shape = height_data.shape
+            height_data_downsampled, downsample_factor = downsample_image_block_average(
+                height_data, max_dimension=self.downsample_image_size
+            )
+            t_downsample = time.perf_counter() - t_downsample_start
+
+            if downsample_factor > 1.0:
+                LOGGER.info(
+                    f"Downsampled from {original_shape[0]}x{original_shape[1]} to "
+                    f"{height_data_downsampled.shape[0]}x{height_data_downsampled.shape[1]} "
+                    f"({t_downsample:.3f}s)"
+                )
+
+            # Apply baseline correction using median of downsampled data
+            t_baseline_start = time.perf_counter()
+            baseline = np.nanmedian(height_data_downsampled)
+            height_data_downsampled = height_data_downsampled - baseline
+            t_baseline = time.perf_counter() - t_baseline_start
+            LOGGER.info(f"Baseline correction applied: baseline={baseline:.3f} ({t_baseline:.3f}s)")
+
+            # Also apply baseline to original data for histogram
+            height_data = height_data - baseline
+
             # Get cached percentiles if available
             cached_percentiles = None
             if "percentile_1" in result["metadata"] and "percentile_99" in result["metadata"]:
@@ -366,12 +378,12 @@ class ProfilingBlock(DataBlock):
             # Create the 2D image plot
             t_image_start = time.perf_counter()
             image_plot = self._create_image_plot(
-                height_data,
+                height_data_downsampled,
                 pixel_size=pixel_size,
                 title="Surface Height Profile",
                 colorbar_label="Height",
                 cached_percentiles=cached_percentiles,
-                downsample_image_size=self.downsample_image_size,
+                downsample_factor=downsample_factor,
             )
             t_image = time.perf_counter() - t_image_start
             LOGGER.info(f"Image plot creation completed in {t_image:.3f}s")
