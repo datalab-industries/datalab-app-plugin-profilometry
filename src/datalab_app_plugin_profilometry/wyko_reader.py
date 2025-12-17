@@ -12,6 +12,8 @@ from typing import cast
 import numpy as np
 from pydatalab.logger import LOGGER
 
+from datalab_app_plugin_profilometry import __version__
+
 
 def parse_wyko_header(filepath: str | Path) -> dict[str, int | float | None]:
     """
@@ -286,7 +288,8 @@ def save_wyko_cache(
     Save loaded Wyko data as compressed numpy file for faster reloading.
 
     This function also pre-calculates and caches percentile values (1st and 99th)
-    for the raw_data to speed up plotting operations.
+    for the raw_data to speed up plotting operations, and stores the software
+    version used to create the cache for version-based invalidation.
 
     Args:
         filepath: Original ASC file path (used to generate cache name)
@@ -306,35 +309,21 @@ def save_wyko_cache(
         "x_size": result["metadata"]["x_size"],
         "y_size": result["metadata"]["y_size"],
         "pixel_size": result["metadata"]["pixel_size"],
+        "cache_version": __version__,  # Store software version
     }
 
     # Calculate and cache percentiles for faster plotting
-    t_percentile_start = time.perf_counter()
     raw_data = result["raw_data"]
     valid_data = raw_data[~np.isnan(raw_data)]
-
-    if len(valid_data) > 0:
-        percentile_1 = np.percentile(valid_data, 1)
-        percentile_99 = np.percentile(valid_data, 99)
-        save_dict["percentile_1"] = np.float32(percentile_1)
-        save_dict["percentile_99"] = np.float32(percentile_99)
-        t_percentile = time.perf_counter() - t_percentile_start
-        LOGGER.debug(
-            f"Calculated percentiles for caching in {t_percentile:.3f}s "
-            f"(p1={percentile_1:.3f}, p99={percentile_99:.3f})"
-        )
-    else:
-        # No valid data, store default values
-        save_dict["percentile_1"] = np.float32(0.0)
-        save_dict["percentile_99"] = np.float32(1.0)
-        t_percentile = time.perf_counter() - t_percentile_start
-        LOGGER.debug(f"No valid data for percentiles, using defaults ({t_percentile:.3f}s)")
 
     if "intensity" in result:
         save_dict["intensity"] = result["intensity"]
 
-    np.savez_compressed(cache_path, **save_dict)
-    print(f"Saved cache to: {cache_path}")
+    if len(valid_data) > 0:
+        np.savez_compressed(cache_path, **save_dict)
+    else:
+        raise ValueError("No valid data to save in cache")
+    LOGGER.info(f"Saved cache (version {__version__}) to: {cache_path}")
 
     return cache_path
 
@@ -417,8 +406,23 @@ def load_wyko_asc_cached(
         cache_mtime = cache_path.stat().st_mtime
 
         if cache_mtime >= asc_mtime:
-            use_cache = True
-            LOGGER.info(f"Loading from cache: {cache_path.name}")
+            # Also check if the cache version matches current software version
+            try:
+                cached = np.load(cache_path)
+                cache_version = str(cached.get("cache_version", "unknown"))
+
+                if cache_version != __version__:
+                    LOGGER.info(
+                        f"Cache version mismatch (cache: {cache_version}, current: {__version__}), "
+                        "regenerating cache"
+                    )
+                    use_cache = False
+                else:
+                    use_cache = True
+                    LOGGER.info(f"Loading from cache: {cache_path.name} (version {cache_version})")
+            except Exception as e:
+                LOGGER.warning(f"Failed to check cache version ({e}), regenerating cache")
+                use_cache = False
         else:
             LOGGER.info("Cache is stale (older than source file), regenerating cache")
 
