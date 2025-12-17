@@ -287,8 +287,7 @@ def save_wyko_cache(
     """
     Save loaded Wyko data as compressed numpy file for faster reloading.
 
-    This function also pre-calculates and caches percentile values (1st and 99th)
-    for the raw_data to speed up plotting operations, and stores the software
+    This function also stores the software
     version used to create the cache for version-based invalidation.
 
     Args:
@@ -337,7 +336,6 @@ def load_wyko_cache(cache_path: str | Path) -> dict:
 
     Returns:
         Dictionary with same structure as load_wyko_asc(), plus optional
-        cached percentile values in metadata if available.
     """
     cache_path = Path(cache_path)
 

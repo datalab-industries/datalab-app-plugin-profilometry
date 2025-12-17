@@ -96,7 +96,6 @@ class ProfilingBlock(DataBlock):
         pixel_size: float | None = None,
         title: str = "Surface Profile",
         colorbar_label: str = "Height",
-        cached_percentiles: tuple[float, float] | None = None,
         downsample_factor: float = 1.0,
     ):
         """
@@ -107,7 +106,6 @@ class ProfilingBlock(DataBlock):
             pixel_size: Physical pixel size in mm (for axis scaling)
             title: Plot title
             colorbar_label: Label for the colorbar
-            cached_percentiles: Optional tuple of (p1, p99) percentiles from cache
             downsample_factor: Factor by which the image was downsampled (for pixel size adjustment)
 
         Returns:
@@ -362,14 +360,6 @@ class ProfilingBlock(DataBlock):
             # Also apply baseline to original data for histogram
             height_data = height_data - baseline
 
-            # Get cached percentiles if available
-            cached_percentiles = None
-            if "percentile_1" in result["metadata"] and "percentile_99" in result["metadata"]:
-                cached_percentiles = (
-                    result["metadata"]["percentile_1"],
-                    result["metadata"]["percentile_99"],
-                )
-
             # Create the 2D image plot
             t_image_start = time.perf_counter()
             image_plot = self._create_image_plot(
@@ -377,7 +367,6 @@ class ProfilingBlock(DataBlock):
                 pixel_size=pixel_size,
                 title="Surface Height Profile",
                 colorbar_label="Height",
-                cached_percentiles=cached_percentiles,
                 downsample_factor=downsample_factor,
             )
             t_image = time.perf_counter() - t_image_start
