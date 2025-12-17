@@ -138,23 +138,18 @@ class ProfilingBlock(DataBlock):
             y_label = "Y (pixels)"
 
         # Calculate color range, ignoring NaN values
-        # Use cached percentiles if available, otherwise calculate
-        if cached_percentiles is not None:
-            vmin, vmax = cached_percentiles
-            LOGGER.debug(f"Using cached percentiles: p1={vmin:.3f}, p99={vmax:.3f}")
+        t_percentile_start = time.perf_counter()
+        valid_data = image_data[~np.isnan(image_data)]
+        if len(valid_data) > 0:
+            # Use percentiles to avoid outliers dominating the color scale
+            vmin = np.percentile(valid_data, 1)
+            vmax = np.percentile(valid_data, 99)
         else:
-            t_percentile_start = time.perf_counter()
-            valid_data = image_data[~np.isnan(image_data)]
-            if len(valid_data) > 0:
-                # Use percentiles to avoid outliers dominating the color scale
-                vmin = np.percentile(valid_data, 1)
-                vmax = np.percentile(valid_data, 99)
-            else:
-                vmin, vmax = 0, 1
-            t_percentile = time.perf_counter() - t_percentile_start
-            LOGGER.debug(
-                f"Percentile calculation took {t_percentile:.3f}s ({len(valid_data):,} valid pixels)"
-            )
+            vmin, vmax = 0, 1
+        t_percentile = time.perf_counter() - t_percentile_start
+        LOGGER.debug(
+            f"Percentile calculation took {t_percentile:.3f}s ({len(valid_data):,} valid pixels)"
+        )
 
         # Create color mapper
         color_mapper = LinearColorMapper(

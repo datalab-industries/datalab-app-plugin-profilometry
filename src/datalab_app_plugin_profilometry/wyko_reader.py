@@ -366,15 +366,6 @@ def load_wyko_cache(cache_path: str | Path) -> dict:
         "raw_data": cached["raw_data"],
     }
 
-    # Load cached percentiles if available (for faster plotting)
-    if "percentile_1" in cached and "percentile_99" in cached:
-        result["metadata"]["percentile_1"] = float(cached["percentile_1"])
-        result["metadata"]["percentile_99"] = float(cached["percentile_99"])
-        LOGGER.debug(
-            f"Loaded cached percentiles: p1={result['metadata']['percentile_1']:.3f}, "
-            f"p99={result['metadata']['percentile_99']:.3f}"
-        )
-
     if "intensity" in cached:
         result["intensity"] = cached["intensity"]
 
