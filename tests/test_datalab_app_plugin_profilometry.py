@@ -1,5 +1,7 @@
 """Tests for profiling (Wyko) data blocks and file readers."""
 
+import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +14,7 @@ from datalab_app_plugin_profilometry.wyko_reader import (
 )
 
 # Look for example Wyko .ASC files in the example_data directory
-PROFILING_DATA_DIR = Path(__file__).parent.parent.parent / "example_data" / "profiling"
+PROFILING_DATA_DIR = Path(__file__).parent / "data"
 WYKO_DATA_FILES = list(PROFILING_DATA_DIR.glob("*.ASC")) + list(PROFILING_DATA_DIR.glob("*.asc"))
 
 
@@ -22,12 +24,17 @@ WYKO_DATA_FILES = list(PROFILING_DATA_DIR.glob("*.ASC")) + list(PROFILING_DATA_D
 
 
 @pytest.fixture(scope="module", params=WYKO_DATA_FILES)
-def wyko_file(request):
+def wyko_file(request, tmpdir_factory):
     """Fixture providing a Wyko file path."""
     f = request.param
     if not f.exists():
         pytest.skip(f"Test file not found: {f}")
-    return f
+
+    tmpdir = tmpdir_factory.mktemp("wyko_test_data")
+
+    tmp_path = tmpdir / f.name
+    shutil.copy(f, tmp_path)  # Copy to temp directory to avoid modifying original
+    return tmp_path
 
 
 @pytest.fixture(scope="module")
@@ -130,11 +137,6 @@ def test_load_wyko_asc_with_intensity(wyko_file, wyko_metadata, wyko_data_with_i
         assert result["intensity"].dtype == np.float32
 
 
-# ============================================================================
-# ProfilingBlock Tests
-# ============================================================================
-
-
 def test_profiling_block_accepted_extensions():
     """Test that ProfilingBlock has correct accepted file extensions."""
     assert ".asc" in ProfilingBlock.accepted_file_extensions
@@ -152,31 +154,34 @@ def test_profiling_block_metadata():
 
 def test_profiling_block_plot_generation(wyko_file):
     """Test that ProfilingBlock can generate plots from Wyko files."""
+    wyko_path = Path(str(wyko_file))
     block = ProfilingBlock(item_id="test")
 
     # Generate plot from file path directly (like XRD block does)
-    block.generate_profiling_plot(wyko_file)
+    block.generate_profiling_plot(wyko_path)
 
     # Verify that bokeh_plot_data was created
     assert "bokeh_plot_data" in block.data
     assert block.data["bokeh_plot_data"] is not None
 
+    # Check that the npz and tiff were made
+    assert wyko_path.with_suffix(".npz").exists(), "NPZ file should be created"
+    assert wyko_path.with_suffix(".tiff").exists(), "TIFF file should be created"
 
-# ============================================================================
-# Test with conditional skip if no data files
-# ============================================================================
 
+@pytest.mark.skipif(bool(os.environ.get("CI")), reason="Requires a graphical session (not CI)")
+def test_open_bokeh_plot_in_browser(wyko_file, tmp_path):
+    """Generate the bokeh plot and open it in a browser for visual inspection."""
+    from bokeh.io import output_file, show
 
-def test_example_data_files_exist():
-    """Informational test to show if example data files are present."""
-    if not WYKO_DATA_FILES:
-        pytest.skip(
-            f"No Wyko .ASC files found in {PROFILING_DATA_DIR}. "
-            "Tests will be skipped. To enable tests, add example .ASC files to "
-            f"{PROFILING_DATA_DIR.relative_to(Path(__file__).parent.parent.parent)}"
-        )
-    else:
-        # Just log the files we found
-        print(f"\nFound {len(WYKO_DATA_FILES)} Wyko data file(s):")
-        for f in WYKO_DATA_FILES:
-            print(f"  - {f.name}")
+    wyko_path = Path(str(wyko_file))
+
+    block = ProfilingBlock(item_id="test")
+    block.generate_profiling_plot(wyko_path)
+
+    assert "bokeh_plot_data" in block.data
+
+    html_path = tmp_path / f"profilometry_{wyko_path.stem}.html"
+    output_file(html_path, title=f"Profilometry Plot - {wyko_path.name}")
+    show(block._layout)
+    print(f"\nOpened plot in browser: {html_path}")
