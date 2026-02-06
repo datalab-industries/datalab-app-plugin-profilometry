@@ -735,6 +735,7 @@ name = "datalab-app-plugin-profilometry"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
+    { name = "pillow" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
@@ -757,6 +758,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = "<2" },
+    { name = "pillow", specifier = ">=11.0" },
     { name = "scipy", specifier = "~=1.13" },
 ]
 
