@@ -9,8 +9,9 @@ from pathlib import Path
 import bokeh.embed
 import numpy as np
 from bokeh.layouts import column
-from bokeh.models import ColorBar, LinearColorMapper
+from bokeh.models import Button, ColorBar, CustomJS, LinearColorMapper
 from bokeh.plotting import figure
+from PIL import Image
 from pydatalab.blocks.base import DataBlock
 from pydatalab.bokeh_plots import DATALAB_BOKEH_THEME
 from pydatalab.file_utils import get_file_info_by_id
@@ -290,6 +291,21 @@ class ProfilingBlock(DataBlock):
 
         return p
 
+    def _save_tiff(self, raw_data: np.ndarray, filename: Path) -> None:
+        """Save raw height data as a 32-bit float TIFF alongside the source file.
+
+        Args:
+            raw_data: 2D float32 numpy array of height values.
+            filename: The path to write the TIFF to.
+        """
+        _raw_data = np.nan_to_num(raw_data, nan=0.0).astype(
+            np.float32
+        )  # Replace NaN with 0 for TIFF saving
+
+        with open(filename, "wb") as f:
+            img = Image.fromarray(_raw_data.astype(np.float32), mode="F")
+            img.save(f, format="TIFF")
+
     def generate_profiling_plot(self, filepath=None):
         """Generate the profiling plot from the associated file.
 
@@ -334,6 +350,22 @@ class ProfilingBlock(DataBlock):
             pixel_size = result["metadata"].get("pixel_size")
             data_size_mb = height_data.nbytes / (1024 * 1024)
             LOGGER.debug(f"Loaded data: {height_data.shape} array, {data_size_mb:.2f} MB")
+
+            # Save full-resolution raw data as TIFF (idempotent: skip if already saved)
+            tiff_path = file_path.with_suffix(".tiff")
+            if not tiff_path.exists():
+                try:
+                    self._save_tiff(height_data, tiff_path)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to save TIFF file: {e}", exc_info=True)
+                    raise RuntimeError(f"Failed to save TIFF file: {e}")
+            else:
+                LOGGER.debug("Found existing TIFF file, skipping save")
+            self.data["tiff_filename"] = tiff_path.name
+            if self.data.get("file_id"):
+                self.data["tiff_url"] = f"/files/{self.data['file_id']}/{tiff_path.name}"
+            else:
+                self.data["tiff_url"] = tiff_path.as_uri()
 
             # Downsample for visualization if needed
             t_downsample_start = time.perf_counter()
@@ -384,9 +416,26 @@ class ProfilingBlock(DataBlock):
             t_hist = time.perf_counter() - t_hist_start
             LOGGER.info(f"Histogram plot creation completed in {t_hist:.3f}s")
 
+            # Build layout components
+            layout_children = []
+
+            # Add TIFF download button if available
+            if self.data.get("tiff_url"):
+                download_btn = Button(label="Download TIFF (float32)", button_type="primary")
+                download_btn.js_on_click(
+                    CustomJS(
+                        args={"url": self.data["tiff_url"]},
+                        code="window.open(url, '_blank');",
+                    )
+                )
+                layout_children.append(download_btn)
+
+            layout_children.extend([image_plot, histogram_plot])
+
             # Combine plots in a vertical layout
             t_layout_start = time.perf_counter()
-            layout = column(image_plot, histogram_plot, sizing_mode="scale_width")
+            layout = column(*layout_children, sizing_mode="scale_width")
+            self._layout = layout
             t_layout = time.perf_counter() - t_layout_start
             LOGGER.debug(f"Layout creation took {t_layout:.3f}s")
 
