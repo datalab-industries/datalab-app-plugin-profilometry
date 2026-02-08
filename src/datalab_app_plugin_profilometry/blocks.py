@@ -306,7 +306,7 @@ class ProfilingBlock(DataBlock):
             img = Image.fromarray(_raw_data.astype(np.float32), mode="F")
             img.save(f, format="TIFF")
 
-    def generate_profiling_plot(self, filepath=None):
+    def generate_profiling_plot(self, filepath: str | Path | None = None):
         """Generate the profiling plot from the associated file.
 
         Args:
