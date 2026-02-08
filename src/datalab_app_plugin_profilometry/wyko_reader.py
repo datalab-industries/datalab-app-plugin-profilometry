@@ -193,15 +193,17 @@ def load_wyko_asc(
         - intensity: Intensity profile (only if load_intensity=True)
 
     Example:
-        >>> result = load_wyko_asc('sample.ASC')
-        >>> height = result['raw_data']
-        >>> pixel_size = result['metadata']['pixel_size']
+        ```python
+        result = load_wyko_asc('sample.ASC')
+        height = result['raw_data']
+        pixel_size = result['metadata']['pixel_size']
 
-        >>> # Plot the data
-        >>> import matplotlib.pyplot as plt
-        >>> plt.imshow(height, cmap='viridis')
-        >>> plt.colorbar(label='Height')
-        >>> plt.show()
+        # Plot the data
+        import matplotlib.pyplot as plt
+        plt.imshow(height, cmap='viridis')
+        plt.colorbar(label='Height')
+        plt.show()
+        ```
     """
     t_start_total = time.perf_counter()
     filepath = Path(filepath)
